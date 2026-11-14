@@ -1,7 +1,7 @@
 # Offline Task Calendar
 **A simple offline planner for things that don't happen very often**  
 
-**Release:** 1.3.3 — save name and today count  
+**Release:** 1.3.4 — recurrence shifts and resolved dates
 
 This project was originally created by a friend of mine, for his own personal use.  
 It's a small, offline calendar and task database designed with autistic people in mind, particularly for keeping track of tasks that only need to be done occasionally.  
@@ -14,6 +14,20 @@ A friend showed me something he had built to solve a problem in his own life, an
 Created by Jamsa.
 
 # Original Readme
+
+## Release note — v1.3.4
+
+- Manual postponement now shifts the future recurrence series according to the task's existing recurrence rule and selectors.
+- Skipping a postponed occurrence preserves that adjusted schedule, so old future dates do not reappear.
+- Completing a postponed occurrence resets the recurrence anchor to the actual completion date and clears the temporary schedule adjustment.
+- A task's adjusted recurrence anchor is saved in JSON. Existing pending or skipped manual-postponement records from v1.3.3 are also recognized when loaded.
+- Complete and Skip actions are recorded against the calendar date selected when the action is made; the exact timestamp is retained separately.
+- Added regression coverage for postpone → skip → next occurrence, postpone → complete → re-anchor, and result-date placement.
+
+## Release note — v1.3.1
+
+The Absences manager now has a visible **＋ Add absence** button, including when no absences exist yet. Open **Absences** in the main toolbar, choose **＋ Add absence**, enter a name and inclusive start/end dates, then save.
+
 A private, offline HTML5 recurring-task calendar. It uses plain HTML, CSS and JavaScript, has no backend, makes no network requests, and stores persistent user data in one JSON file that you control.
 
 ## Run it
@@ -60,11 +74,12 @@ When completed, the occurrence's actual completion date becomes the task's new r
 
 ## Occurrence behavior
 
-Only one actionable pending occurrence is maintained per task. The calendar also calculates non-persistent previews for every later recurrence in the visible month, year or decade range. This means a weekly task appears on every matching day in a future month even though only the next occurrence currently has Complete, Postpone and Skip actions. Future previews open the task editor; after the current occurrence is completed or skipped, the preview dates are recalculated from the updated recurrence anchor.
+Only one actionable pending occurrence is maintained per task. The calendar also calculates non-persistent previews for every later recurrence in the visible month, year or decade range. This means a weekly task appears on every matching day in a future month even though only the next occurrence currently has Complete, Postpone and Skip actions. Future previews open the task editor; previews are recalculated after postponement, completion or skipping using the task's effective recurrence anchor.
 
-- **Complete:** records the actual completion date and moves the recurrence anchor to that date.
-- **Postpone:** changes the occurrence's scheduled date but preserves its original due date and reschedule history.
-- **Skip:** records the skip and leaves the recurrence anchor unchanged.
+- **Complete:** records the actual completion date, moves the recurrence anchor to that date, and clears any temporary postponement adjustment.
+- **Postpone:** changes the occurrence's scheduled date, preserves its original due date and reschedule history, and shifts subsequent recurrence dates using the same recurrence rule from the new schedule anchor.
+- **Skip:** records the skip and leaves the current recurrence anchor unchanged. If the occurrence had been postponed, the adjusted schedule remains in effect, so the old future dates do not return.
+- **Resolved-event placement:** completed and skipped entries appear on the calendar date selected when the action is recorded (the date the occurrence is being completed/skipped on or for), not automatically on the task's initial anchor date. The task's scheduled date and original due date remain available in the card details when they differ. The exact recording timestamp is also retained.
 - **Overdue:** an unfinished occurrence displays on today, with the number of days since its current scheduled date. Its stored scheduled date and original due date remain available in history.
 
 ## Absence behavior
@@ -90,7 +105,7 @@ Multiple tasks may appear on the same day. There is no daily workload limit.
 
 ## Save-file format
 
-The JSON file has `version`, `settings`, `tasks`, `absences` and `occurrences` collections. The current save-file schema is version **2**. Future dates are calculated dynamically; completed and skipped history and manual postponements are retained.
+The JSON file has `version`, `settings`, `tasks`, `absences` and `occurrences` collections. The current save-file schema is version **2**. Future dates are calculated dynamically; completed and skipped history and manual postponements are retained. A task may contain `scheduleAnchorDate` when a manual postponement has shifted its future recurrence cadence; this field is optional and is preserved in JSON exports.
 
 **Older save files are deliberately not supported.** The importer accepts only version 2 and does not migrate or repair version 1 files. Start a new save file in this release rather than importing a file from an earlier release. The importer checks the schema and refuses unknown versions or inconsistent occurrence references.
 
@@ -104,12 +119,12 @@ From this folder, run:
 node --test tests/*.test.cjs
 ```
 
-The suite covers recurrence intervals, combined rules, month-end and leap-year handling, active-month filters, year-view day-number indicators, completion-based anchors, overdue counters, skipping, manual postponement, all three absence policies, future recurrence previews, rejection of obsolete save-file formats, CSP restrictions, oversized-file rejection, strict save validation and escaped imported task names.
+The suite covers recurrence intervals, combined rules, month-end and leap-year handling, active-month filters, year-view day-number indicators, completion-based anchors, overdue counters, skipping, manual postponement and shifted future recurrences, result placement on the resolved occurrence date, all three absence policies, future recurrence previews, rejection of obsolete save-file formats, CSP restrictions, oversized-file rejection, strict save validation and escaped imported task names.
 
 ## Current limitations
 
 - Saving is an explicit JSON download. A normal local HTML page cannot silently overwrite an arbitrary local file, so export the JSON again after making changes and replace your previous save file.
-- Future recurrence dates are previews based on the current anchor. Only the next occurrence is actionable; later previews are recalculated when the task is completed or skipped. This avoids permanently saving speculative future occurrences.
+- Future recurrence dates are previews based on the task's effective anchor. Only the next occurrence is actionable; later previews are recalculated when the task is postponed, completed or skipped. This avoids permanently saving speculative future occurrences.
 - The application is not packaged as an installable PWA. It works offline because all assets are local and there are no network dependencies.
 
 
@@ -129,3 +144,11 @@ Because the application is opened directly as a local file, its Content Security
 
 - Save exports use the fixed filename `offline-task-calendar.json` without a date suffix.
 - The application heading and browser tab title show today's task count. The count includes pending, projected, completed and skipped task occurrences displayed for the current local date, but excludes absence entries.
+
+
+## Release 1.3.4
+
+- Manual postponement now shifts the subsequent recurrence series while preserving the task's weekday, date, ordinal and active-month selectors.
+- Skipping a postponed occurrence keeps the adjusted series; completing it instead resets the anchor to the actual completion date.
+- Existing v1.3.3 pending or skipped manual-postponement records are recognized so their adjusted schedule is retained after importing the save file.
+- Complete and Skip events are filed under the calendar date selected when the action is recorded; the exact recording timestamp remains available in the occurrence history.

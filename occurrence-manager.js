@@ -72,11 +72,50 @@
     }
     throw new Error("Unable to resolve overlapping absence dates.");
   }
+  function recurrenceAnchor(task) {
+    return task.scheduleAnchorDate || task.anchorDate;
+  }
+
+  function recoverScheduleAnchor(state, task, pending) {
+    // Recover a cadence shift from v1.3.3 records, which stored the manual
+    // reschedule on the occurrence but did not persist it on the task. A null
+    // value is an explicit reset (for example, after editing the recurrence).
+    if (task.scheduleAnchorDate !== undefined) return;
+
+    const completed = state.occurrences
+      .filter(item => item.taskId === task.id && item.status === "completed")
+      .sort((a, b) => cmp(a.resolvedAt || "", b.resolvedAt || ""));
+    const latestCompletionAt = completed.length ? (completed[completed.length - 1].resolvedAt || "") : "";
+
+    if (pending && Array.isArray(pending.rescheduleHistory)) {
+      const latestManual = pending.rescheduleHistory
+        .filter(entry => entry.reason === "manual")
+        .sort((a, b) => cmp(a.at, b.at));
+      if (latestManual.length && latestManual[latestManual.length - 1].at > latestCompletionAt) {
+        task.scheduleAnchorDate = pending.scheduledDate;
+        return;
+      }
+    }
+
+    const skipped = state.occurrences
+      .filter(item => item.taskId === task.id && item.status === "skipped" && Array.isArray(item.rescheduleHistory) &&
+        item.rescheduleHistory.some(entry => entry.reason === "manual"))
+      .sort((a, b) => cmp(a.resolvedAt || "", b.resolvedAt || ""));
+    if (skipped.length) {
+      const latest = skipped[skipped.length - 1];
+      if ((latest.resolvedAt || "") > latestCompletionAt) task.scheduleAnchorDate = latest.scheduledDate;
+    }
+  }
+
   function nextBaseDate(state, task, afterDate) {
-    let after = afterDate || (task.hasCompleted ? task.anchorDate : R.addDays(task.anchorDate, -1));
+    const anchor = recurrenceAnchor(task);
+    // The initial anchor is inclusive for a new task. A schedule anchor exists
+    // only after a manual postponement, so it is exclusive: the postponed
+    // occurrence itself must not be generated again after it is skipped.
+    let after = afterDate || (task.scheduleAnchorDate ? task.scheduleAnchorDate : task.hasCompleted ? task.anchorDate : R.addDays(task.anchorDate, -1));
     for (let guard = 0; guard < 1500; guard++) {
       const searchYears = task.rule.frequency === "year" ? task.rule.interval + 1 : task.rule.frequency === "month" ? Math.ceil(task.rule.interval / 12) + 2 : 20;
-      const next = R.nextOccurrence({ anchor: task.anchorDate, after, rule: task.rule, maxYears: searchYears });
+      const next = R.nextOccurrence({ anchor, after, rule: task.rule, maxYears: searchYears });
       if (!next) return null;
       const skipped = state.occurrences.some(item => item.taskId === task.id && item.status === "skipped" && item.originalDate === next);
       if (skipped) { after = next; continue; }
@@ -102,6 +141,9 @@
 
       for (const task of state.tasks) {
         let pending = pendingForTask(state, task.id);
+        // Recover cadence shifts from the immediately preceding app release,
+        // including an occurrence that was already skipped after postponement.
+        recoverScheduleAnchor(state, task, pending);
         const coveredGroup = pending ? absenceGroupAffecting(state, pending.scheduledDate, today) : null;
         if (pending && (!coveredGroup || pending.absenceGroupEnd === coveredGroup.endDate)) continue;
 
@@ -250,16 +292,18 @@
     for (const task of state.tasks) {
       const pending = pendingForTask(state, task.id);
       if (!pending) continue;
-      // An overdue or manually postponed occurrence blocks later projections.
-      // Absence-postponed occurrences are the exception: their later dates are
-      // still forecast using that task's absence policy.
-      if (cmp(pending.originalDate, today) < 0) continue;
-      if (pending.scheduledDate !== pending.originalDate && !pending.absenceGroupEnd) continue;
+      const manuallyAdjusted = Boolean(task.scheduleAnchorDate);
+      // Ordinary overdue items still block forecasts. A manually postponed item
+      // has a new recurrence phase, so its later occurrences remain visible even
+      // when the original due date is already in the past. Absence postponements
+      // continue to forecast from the unmodified recurrence anchor.
+      if (cmp(pending.originalDate, today) < 0 && !manuallyAdjusted && !pending.absenceGroupEnd) continue;
+      if (pending.scheduledDate !== pending.originalDate && !pending.absenceGroupEnd && !manuallyAdjusted) continue;
 
-      const searchFrom = R.addDays(pending.originalDate, 1);
+      const searchFrom = R.addDays(manuallyAdjusted ? pending.scheduledDate : pending.originalDate, 1);
       if (cmp(searchFrom, to) > 0) continue;
       const candidates = R.generateOccurrences({
-        anchor: task.anchorDate,
+        anchor: recurrenceAnchor(task),
         rule: task.rule,
         from: searchFrom,
         to,
@@ -334,6 +378,9 @@
     item.resolvedAt = new Date().toISOString();
     task.anchorDate = completedDate;
     task.hasCompleted = true;
+    // Completion becomes the definitive new anchor and clears any temporary
+    // schedule shift introduced by postponement.
+    delete task.scheduleAnchorDate;
     return item;
   }
 
@@ -366,6 +413,10 @@
     item.rescheduleHistory = item.rescheduleHistory || [];
     item.rescheduleHistory.push({ from: item.scheduledDate, to: targetDate, at: changedAt || new Date().toISOString(), reason: "manual" });
     item.scheduledDate = targetDate;
+    // Shift the future recurrence series as well. Keeping this on the task means
+    // a subsequent Skip advances the adjusted series instead of restoring dates
+    // from the old anchor. Complete clears it and re-anchors from actual completion.
+    task.scheduleAnchorDate = targetDate;
     delete item.absenceGroupEnd;
     return { item, skipped: false };
   }

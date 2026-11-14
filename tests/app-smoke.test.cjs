@@ -163,11 +163,63 @@ test('application bootstraps and renders a month calendar without a browser fram
   assert.match(elements.get('selectedDayContent').innerHTML, /data-open-task="task-test-id-3"/);
   listeners.click({ target: { closest(selector) { return selector === '[data-open-task]' ? taskLink : null; } } });
   assert.equal(elements.get('taskDialog').open, true, 'task editor opens from the selected-day sidebar');
+  elements.get('taskDialog').close();
+
+  // Postponing changes the future recurrence cadence. Skipping that postponed
+  // occurrence must not revive the old future dates, and the result belongs to
+  // the postponed occurrence date rather than the task's original start date.
+  listeners.click({ target: { closest(selector) {
+    if (selector === '[data-date]') return { dataset: { date: '2027-04-05' } };
+    return null;
+  } } });
+  const pendingCard = elements.get('selectedDayContent').innerHTML;
+  const occurrenceMatch = pendingCard.match(/data-action="postpone" data-occurrence="([^"]+)"/);
+  assert.ok(occurrenceMatch, 'first weekly occurrence is actionable');
+  listeners.click({ target: { closest(selector) {
+    return selector === '[data-action]' ? { dataset: { action: 'postpone', occurrence: occurrenceMatch[1] } } : null;
+  } } });
+  elements.get('postponeDate').value = '2027-04-14';
+  elements.get('postponeForm').listeners.submit({ preventDefault() {} });
+  assert.doesNotMatch(elements.get('selectedDayContent').innerHTML, /Weekly April task/, 'the task leaves its original date after postponement');
+
+  listeners.click({ target: { closest(selector) {
+    if (selector === '[data-date]') return { dataset: { date: '2027-04-14' } };
+    return null;
+  } } });
+  const postponedCard = elements.get('selectedDayContent').innerHTML;
+  const skipMatch = postponedCard.match(/data-action="skip" data-occurrence="([^"]+)"/);
+  assert.ok(skipMatch, 'postponed occurrence remains actionable on its new date');
+  listeners.click({ target: { closest(selector) {
+    return selector === '[data-action]' ? { dataset: { action: 'skip', occurrence: skipMatch[1] } } : null;
+  } } });
+  assert.match(elements.get('selectedDayContent').innerHTML, /Skipped manually/);
+  assert.match(elements.get('selectedDayContent').innerHTML, /Recorded Apr 14, 2027/);
+  assert.match(elements.get('selectedDayContent').innerHTML, /Originally due Apr 5, 2027/);
+  assert.doesNotMatch(elements.get('selectedDayContent').innerHTML, /Upcoming recurrence · Apr 12, 2027/);
+
+  listeners.click({ target: { closest(selector) {
+    if (selector === '[data-date]') return { dataset: { date: '2027-04-21' } };
+    return null;
+  } } });
+  assert.match(elements.get('selectedDayContent').innerHTML, /Weekly April task/);
+  listeners.click({ target: { closest(selector) {
+    if (selector === '[data-date]') return { dataset: { date: '2027-04-28' } };
+    return null;
+  } } });
+  assert.match(elements.get('selectedDayContent').innerHTML, /Upcoming/);
+
+  // The skipped result is attached to the adjusted occurrence date, not the
+  // original task date; its actual action date remains visible in the details.
+  listeners.click({ target: { closest(selector) {
+    if (selector === '[data-date]') return { dataset: { date: '2027-04-05' } };
+    return null;
+  } } });
+  assert.doesNotMatch(elements.get('selectedDayContent').innerHTML, /Skipped manually/);
 
   // Year view uses the date number itself for task status, not a tiny dot.
   viewButtons.find(button => button.dataset.view === "year").click();
-  assert.ok(calendar.innerHTML.includes('class="mini-day has-items has-pending" data-date="2027-04-05"'));
-  for (const date of ['2027-04-05', '2027-04-12', '2027-04-19', '2027-04-26']) {
+  assert.ok(calendar.innerHTML.includes('class="mini-day has-items has-skipped" data-date="2027-04-14"'));
+  for (const date of ['2027-04-14', '2027-04-21', '2027-04-28']) {
     assert.ok(calendar.innerHTML.includes('data-date="' + date + '"'), 'year view marks scheduled date ' + date);
   }
   const styles = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');

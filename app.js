@@ -171,6 +171,9 @@
     for (const entry of O.projectedDisplay(state, range.from, range.to, today)) addPendingEvent(entry, "projected");
     for (const item of state.occurrences) {
       let date = null, type = null;
+      // Resolved actions belong to the calendar day the user selected when
+      // recording them. This is the occurrence's action/for date, not the task's
+      // initial anchor date. resolvedAt still records the exact actual timestamp.
       if (item.status === "completed") { date = item.completedDate; type = "completed"; }
       else if (item.status === "skipped") { date = item.skippedDate; type = "skipped"; }
       if (!date) continue;
@@ -325,10 +328,15 @@
       meta = 'Upcoming recurrence · ' + formatDate(occurrence.originalDate);
     } else if (type === "completed") {
       badge = '<span class="status-badge status-completed">Completed</span>';
-      meta = 'Completed ' + formatDate(occurrence.completedDate) + (occurrence.originalDate !== occurrence.completedDate ? ' · Originally due ' + formatDate(occurrence.originalDate) : '');
+      meta = 'Completed ' + formatDate(occurrence.completedDate) +
+        (occurrence.scheduledDate !== occurrence.completedDate ? ' · For ' + formatDate(occurrence.scheduledDate) : '') +
+        (occurrence.originalDate !== occurrence.scheduledDate ? ' · Originally due ' + formatDate(occurrence.originalDate) : '');
     } else {
       badge = '<span class="status-badge status-skipped">Skipped</span>';
-      meta = (occurrence.skipReason === "absence" ? 'Skipped during absence' : occurrence.skipReason === "season" ? 'Skipped outside selected months' : 'Skipped manually') + ' · Originally due ' + formatDate(occurrence.originalDate);
+      const skipDescription = occurrence.skipReason === "absence" ? 'Skipped during absence' : occurrence.skipReason === "season" ? 'Skipped outside selected months' : 'Skipped manually';
+      meta = skipDescription + ' · Recorded ' + formatDate(occurrence.skippedDate) +
+        (occurrence.scheduledDate !== occurrence.skippedDate ? ' · For ' + formatDate(occurrence.scheduledDate) : '') +
+        (occurrence.originalDate !== occurrence.scheduledDate ? ' · Originally due ' + formatDate(occurrence.originalDate) : '');
     }
     let actions = "";
     if (type === "pending") {
@@ -499,6 +507,9 @@
         existing.absencePolicy = absencePolicy;
         if (ruleChanged) {
           state.occurrences = state.occurrences.filter(item => !(item.taskId === id && item.status === "pending"));
+          // null means an explicit reset. It prevents old skipped-postponement
+          // history from restoring a schedule shift after the user edits rules.
+          existing.scheduleAnchorDate = null;
         }
       } else {
         if (state.tasks.length >= MAX_TASKS) throw new Error("The application limit of 5,000 tasks has been reached.");
@@ -600,7 +611,7 @@
 
   function completeOccurrence(id) {
     try {
-      O.complete(state, id, todayLocal());
+      O.complete(state, id, selectedDate || todayLocal());
       markChanged("Task completed · next date recalculated");
     } catch (err) {
       showToast(err.message || "Could not complete this task");
@@ -612,7 +623,7 @@
     if (!occurrence || occurrence.status !== "pending") return;
     if (!window.confirm("Skip “" + (getTask(occurrence.taskId) || { name: "this task" }).name + "”?")) return;
     try {
-      O.skip(state, id, todayLocal(), "manual");
+      O.skip(state, id, selectedDate || todayLocal(), "manual");
       markChanged("Occurrence skipped");
     } catch (err) {
       showToast(err.message || "Could not skip this occurrence");
@@ -721,12 +732,13 @@
     const taskIds = new Set();
     for (const task of data.tasks) {
       requireExactKeys(task,
-        ["id", "name", "anchorDate", "hasCompleted", "rule", "absencePolicy", "createdAt"], [], "Task");
+        ["id", "name", "anchorDate", "hasCompleted", "rule", "absencePolicy", "createdAt"], ["scheduleAnchorDate"], "Task");
       requireId(task.id, "Task");
       if (taskIds.has(task.id)) throw new Error("A task has a duplicate ID.");
       taskIds.add(task.id);
       requireString(task.name, "Task name", 100, false);
       requireDate(task.anchorDate, "Task anchor");
+      if (Object.prototype.hasOwnProperty.call(task, "scheduleAnchorDate") && task.scheduleAnchorDate !== null) requireDate(task.scheduleAnchorDate, "Adjusted schedule anchor");
       if (typeof task.hasCompleted !== "boolean") throw new Error("A task has an invalid completion-state field.");
       if (!["skip", "postpone", "distribute"].includes(task.absencePolicy)) throw new Error("A task has an invalid absence policy.");
       requireTimestamp(task.createdAt, "Task creation date");
@@ -741,7 +753,7 @@
         requireExactKeys(item, ["ordinal", "weekday"], [], "Ordinal weekday rule");
         return { ordinal: item.ordinal, weekday: item.weekday };
       });
-      cleanTasks.push({
+      const cleanTask = {
         id: task.id,
         name: task.name,
         anchorDate: task.anchorDate,
@@ -756,7 +768,9 @@
         },
         absencePolicy: task.absencePolicy,
         createdAt: task.createdAt
-      });
+      };
+      if (Object.prototype.hasOwnProperty.call(task, "scheduleAnchorDate")) cleanTask.scheduleAnchorDate = task.scheduleAnchorDate;
+      cleanTasks.push(cleanTask);
     }
 
     const cleanAbsences = [];
