@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; script-src-attr 'none'; style-src 'self'; style-src-attr 'none'; img-src 'self'; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'">
+  <title>Offline Task Calendar</title>
+  <script src="theme-init.js"></script>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">✓</div>
+      <div>
+        <div class="brand-title-row">
+          <h1>Offline Task Calendar</h1>
+          <span id="todayTaskCount" class="today-task-count" aria-live="polite">0 tasks today</span>
+        </div>
+        <p>Private · Offline · JSON file</p>
+      </div>
+    </div>
+    <div class="header-actions">
+      <span id="saveStatus" class="save-status" aria-live="polite">No save file loaded</span>
+      <button class="button button-secondary theme-toggle" id="themeToggle" type="button" aria-label="Change color theme" title="Change color theme">◐ Theme: System</button>
+      <button class="button button-quiet" id="openJsonButton" type="button">Open JSON</button>
+      <button class="button button-primary" id="saveJsonButton" type="button">Save JSON</button>
+      <input id="jsonFileInput" type="file" accept="application/json,.json" hidden>
+      <button class="icon-button mobile-menu" id="menuButton" type="button" aria-label="Open actions">⋯</button>
+    </div>
+  </header>
+
+  <main class="app-shell">
+    <section class="workspace">
+      <div class="toolbar">
+        <div class="view-switch" role="group" aria-label="Calendar view">
+          <button class="view-button active" data-view="month" type="button">Month</button>
+          <button class="view-button" data-view="year" type="button">Year</button>
+          <button class="view-button" data-view="decade" type="button">Decade</button>
+        </div>
+        <div class="calendar-navigation">
+          <button class="icon-button" id="previousButton" type="button" aria-label="Previous">‹</button>
+          <h2 id="viewTitle">November 2026</h2>
+          <button class="icon-button" id="nextButton" type="button" aria-label="Next">›</button>
+          <button class="button button-quiet today-button" id="todayButton" type="button">Today</button>
+        </div>
+        <div class="toolbar-actions">
+          <button class="button button-secondary" id="manageTasksButton" type="button">Tasks <span id="taskCount" class="count-pill">0</span></button>
+          <button class="button button-secondary" id="manageAbsencesButton" type="button">Absences</button>
+          <button class="button button-primary" id="addTaskButton" type="button">＋ New task</button>
+        </div>
+      </div>
+
+      <div id="calendarContainer" class="calendar-container" aria-live="polite"></div>
+    </section>
+
+    <aside class="day-panel">
+      <div class="panel-heading">
+        <div>
+          <p class="eyebrow">Selected day</p>
+          <h2 id="selectedDateTitle">Today</h2>
+        </div>
+        <button class="icon-button" id="addTaskForDayButton" type="button" aria-label="Add task on selected day">＋</button>
+      </div>
+      <div id="selectedDayContent" class="selected-day-content"></div>
+      <div class="panel-footer">
+        <div class="legend-row"><span class="legend-dot dot-pending"></span> Scheduled</div>
+        <div class="legend-row"><span class="legend-dot dot-completed"></span> Completed</div>
+        <div class="legend-row"><span class="legend-dot dot-skipped"></span> Skipped</div>
+        <div class="legend-row"><span class="legend-dot dot-absence"></span> Absence</div>
+      </div>
+    </aside>
+  </main>
+
+  <dialog id="taskDialog" class="app-dialog">
+    <form id="taskForm" method="dialog" novalidate>
+      <div class="dialog-header">
+        <div>
+          <p class="eyebrow">Task settings</p>
+          <h2 id="taskDialogTitle">New task</h2>
+        </div>
+        <button class="icon-button" type="button" data-close="taskDialog" aria-label="Close">×</button>
+      </div>
+      <div class="dialog-body">
+        <input type="hidden" id="taskId">
+        <label class="field-label" for="taskName">Task name</label>
+        <input class="text-input" id="taskName" maxlength="100" required placeholder="e.g. Mow lawn">
+
+        <div class="form-grid two-columns top-gap">
+          <div>
+            <label class="field-label" for="taskAnchor">First due date</label>
+            <input class="text-input" id="taskAnchor" type="date" required>
+          </div>
+          <div>
+            <label class="field-label" for="taskAbsencePolicy">During absences</label>
+            <select class="text-input" id="taskAbsencePolicy">
+              <option value="skip">Skip occurrences</option>
+              <option value="postpone">Postpone to after absence</option>
+              <option value="distribute">Distribute over following days</option>
+            </select>
+          </div>
+        </div>
+
+        <section class="rule-section">
+          <div class="section-title-row">
+            <h3>Repeat</h3>
+            <span class="section-hint">The interval sets the cadence</span>
+          </div>
+          <div class="form-grid interval-grid">
+            <div>
+              <label class="field-label" for="ruleInterval">Every</label>
+              <input class="text-input" id="ruleInterval" type="number" min="1" max="999" value="1" required>
+            </div>
+            <div>
+              <label class="field-label" for="ruleFrequency">Unit</label>
+              <select class="text-input" id="ruleFrequency">
+                <option value="day">Day(s)</option>
+                <option value="week">Week(s)</option>
+                <option value="month">Month(s)</option>
+                <option value="year">Year(s)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="subsection">
+            <p class="field-label">On selected weekdays <span class="optional">(optional)</span></p>
+            <div class="weekday-picker" id="weekdayPicker">
+              <label><input type="checkbox" value="1"><span>Mon</span></label>
+              <label><input type="checkbox" value="2"><span>Tue</span></label>
+              <label><input type="checkbox" value="3"><span>Wed</span></label>
+              <label><input type="checkbox" value="4"><span>Thu</span></label>
+              <label><input type="checkbox" value="5"><span>Fri</span></label>
+              <label><input type="checkbox" value="6"><span>Sat</span></label>
+              <label><input type="checkbox" value="0"><span>Sun</span></label>
+            </div>
+            <p class="help-text">For example, every 2 weeks on Mondays and Thursdays, or every Monday in every second month. Different rule groups are combined: all groups must match.</p>
+          </div>
+
+          <div class="subsection">
+            <label class="field-label" for="monthDaysInput">On specific dates <span class="optional">(optional)</span></label>
+            <input class="text-input" id="monthDaysInput" placeholder="e.g. 1, 15, last">
+            <p class="help-text">Comma-separated day numbers (1–31) or “last”. Short months automatically use their final day when needed.</p>
+          </div>
+
+          <div class="subsection">
+            <div class="section-title-row">
+              <p class="field-label">Ordinal weekdays <span class="optional">(optional)</span></p>
+              <button class="text-button" id="addOrdinalButton" type="button">＋ Add rule</button>
+            </div>
+            <div id="ordinalRules" class="dynamic-rule-list"></div>
+            <p class="help-text">For example, second Monday or last Friday. Multiple rules are allowed.</p>
+          </div>
+
+          <details class="advanced-details">
+            <summary>Active months <span class="optional">(optional)</span></summary>
+            <div class="month-picker" id="monthPicker">
+              <label><input type="checkbox" value="1"><span>Jan</span></label>
+              <label><input type="checkbox" value="2"><span>Feb</span></label>
+              <label><input type="checkbox" value="3"><span>Mar</span></label>
+              <label><input type="checkbox" value="4"><span>Apr</span></label>
+              <label><input type="checkbox" value="5"><span>May</span></label>
+              <label><input type="checkbox" value="6"><span>Jun</span></label>
+              <label><input type="checkbox" value="7"><span>Jul</span></label>
+              <label><input type="checkbox" value="8"><span>Aug</span></label>
+              <label><input type="checkbox" value="9"><span>Sep</span></label>
+              <label><input type="checkbox" value="10"><span>Oct</span></label>
+              <label><input type="checkbox" value="11"><span>Nov</span></label>
+              <label><input type="checkbox" value="12"><span>Dec</span></label>
+            </div>
+            <p class="help-text">Selected months are the task’s active season and apply to every recurrence and postponement.</p>
+          </details>
+
+        </section>
+        <p class="form-error" id="taskFormError" role="alert"></p>
+      </div>
+      <div class="dialog-footer">
+        <button class="button button-quiet" type="button" data-close="taskDialog">Cancel</button>
+        <button class="button button-primary" type="submit">Save task</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="absenceDialog" class="app-dialog compact-dialog">
+    <form id="absenceForm" method="dialog" novalidate>
+      <div class="dialog-header">
+        <div>
+          <p class="eyebrow">Calendar exception</p>
+          <h2 id="absenceDialogTitle">Add absence</h2>
+        </div>
+        <button class="icon-button" type="button" data-close="absenceDialog" aria-label="Close">×</button>
+      </div>
+      <div class="dialog-body">
+        <input type="hidden" id="absenceId">
+        <label class="field-label" for="absenceName">Name</label>
+        <input class="text-input" id="absenceName" maxlength="80" required placeholder="e.g. Summer vacation">
+        <div class="form-grid two-columns top-gap">
+          <div><label class="field-label" for="absenceStart">From</label><input class="text-input" id="absenceStart" type="date" required></div>
+          <div><label class="field-label" for="absenceEnd">Until</label><input class="text-input" id="absenceEnd" type="date" required></div>
+        </div>
+        <p class="form-error" id="absenceFormError" role="alert"></p>
+      </div>
+      <div class="dialog-footer">
+        <button class="button button-quiet" type="button" data-close="absenceDialog">Cancel</button>
+        <button class="button button-primary" type="submit">Save absence</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="manageDialog" class="app-dialog">
+    <div class="dialog-header">
+      <div><p class="eyebrow">Your schedule</p><h2 id="manageDialogTitle">Tasks</h2></div>
+      <button class="icon-button" type="button" data-close="manageDialog" aria-label="Close">×</button>
+    </div>
+    <div class="dialog-body" id="manageDialogContent"></div>
+    <div class="dialog-footer"><button class="button button-quiet" type="button" data-close="manageDialog">Close</button></div>
+  </dialog>
+
+  <dialog id="postponeDialog" class="app-dialog compact-dialog">
+    <form id="postponeForm" method="dialog" novalidate>
+      <div class="dialog-header">
+        <div><p class="eyebrow">Reschedule occurrence</p><h2>Postpone task</h2></div>
+        <button class="icon-button" type="button" data-close="postponeDialog" aria-label="Close">×</button>
+      </div>
+      <div class="dialog-body">
+        <input type="hidden" id="postponeOccurrenceId">
+        <p id="postponeTaskName" class="postpone-task-name"></p>
+        <label class="field-label" for="postponeDate">New date</label>
+        <input class="text-input" id="postponeDate" type="date" required>
+        <p class="help-text">If the new date is outside the task's selected active months, the occurrence will be skipped.</p>
+        <p class="form-error" id="postponeFormError" role="alert"></p>
+      </div>
+      <div class="dialog-footer">
+        <button class="button button-quiet" type="button" data-close="postponeDialog">Cancel</button>
+        <button class="button button-primary" type="submit">Postpone</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="recurrence-engine.js"></script>
+  <script src="occurrence-manager.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
